@@ -1,9 +1,11 @@
 import json
 import os
+import re
 import subprocess
 import tempfile
 
 import dotenv
+import openpyxl
 import requests
 
 dotenv.load_dotenv()
@@ -125,3 +127,29 @@ def upload_media(file_bytes, file_type):
         os.remove(file_path)
 
     return completed_process.stdout
+
+
+def excel_to_phone_list(file):
+    """
+    Extracts the mobile numbers from all the sheets in an Excel file.
+    Output: {sheet1_name: [mobile_numbers], sheet2_name: [mobile_numbers]}
+    """
+    result = {}
+
+    mobile_number_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
+    valid_number_pattern = re.compile(r"\d{10}")
+
+    wb = openpyxl.load_workbook(file)
+    for sheet in wb.worksheets:
+        for column in sheet.iter_cols():
+            # Check if the column name contains a mobile number keyword
+            if mobile_number_pattern.search(column[0].value):
+                # Extract the mobile numbers from the column
+                mobile_numbers = [
+                    cell.value
+                    for cell in column[1:]
+                    if valid_number_pattern.search(str(cell.value))
+                ]
+                result[sheet.title] = mobile_numbers
+
+    return result
