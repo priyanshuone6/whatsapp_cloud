@@ -15,6 +15,10 @@ WHATSAPP_APP_ID = os.getenv("WHATSAPP_APP_ID")
 
 def generate_components(texts_list):
     """Generates the components for the WhatsApp message."""
+    # If all the texts in Variables are empty, return an empty list
+    if all(element == "" for element in texts_list):
+        return []
+
     parameters = []
     for text in texts_list:
         component = {"type": "text", "text": text}
