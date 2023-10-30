@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import streamlit as st
 
@@ -24,18 +25,17 @@ def get_header_input(header_type):
 
 def get_phone_input(message_method):
     if message_method == "Phone Number":
-        return st.number_input("Enter Phone Number", value=0)
+        phone_number = st.text_input("Enter Phone Number")
+        if len(phone_number) != 10 or not phone_number.isdigit():
+            st.error("Please enter a valid 10 digit phone number")
+            return None
+        return phone_number
     elif message_method == "Excel File":
         return st.file_uploader("Upload xlsx file", type=["xlsx"])
 
 
 # Streamlit App
-st.title("WhatsApp Bulk Message Sender")
-
-st.markdown(
-    """<style>[class="st-emotion-cache-76z9jo e116k4er2"]{display: none;}""",
-    unsafe_allow_html=True,
-)
+st.title("WhatsApp Message Sender")
 
 # Input fields
 all_templates = get_message_templates()
@@ -44,7 +44,11 @@ selected_template = st.selectbox("Select Template Name", all_templates)
 # Header selection
 header_type = st.radio("Select Header Type", ["Text", "Image"])
 header_input = get_header_input(header_type)
-country_code = st.number_input("Enter Country Code", value=91)
+country_code = st.text_input("Enter Country Code", value="91")
+
+if not re.match("^[0-9]+$", country_code):
+    st.error("Please enter a valid country code with only digits")
+    country_code = None
 
 # Message method selection
 phone_method = st.radio(
@@ -83,6 +87,7 @@ if st.button("Send Message"):
     image_component = None
     if header_input is not None:
         image_content = upload_media(header_input.read(), header_input.type)
+        st.write(image_content)
         image_id = json.loads(image_content)["id"]
         image_component = {
             "type": "header",
