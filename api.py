@@ -137,7 +137,7 @@ def excel_to_phone_list(file):
     result = {}
 
     mobile_number_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
-    valid_number_pattern = re.compile(r"\d{10}")
+    valid_number_pattern = re.compile(r"^.{10}$")
 
     wb = openpyxl.load_workbook(file)
     for sheet in wb.worksheets:
