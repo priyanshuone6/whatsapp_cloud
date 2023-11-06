@@ -12,9 +12,13 @@ from api import (
     upload_media,
 )
 
+# Set up logging
+logging.basicConfig(
+    filename="logs.log",
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
-FileOutputHandler = logging.FileHandler("logs.log")
-logger.addHandler(FileOutputHandler)
 
 
 # Function to get user inputs based on selected header type
