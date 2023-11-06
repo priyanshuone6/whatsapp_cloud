@@ -91,7 +91,7 @@ if st.button("Send Message"):
     image_component = None
     if header_input is not None:
         image_content = upload_media(header_input.read(), header_input.type)
-        st.write(image_content)
+        st.write(f"Uploaded image: {image_content}")
         image_id = json.loads(image_content)["id"]
         image_component = {
             "type": "header",
@@ -108,7 +108,7 @@ if st.button("Send Message"):
         phone_numbers_dict = excel_to_phone_list(phone_method_input)
 
     # st.write(phone_numbers_dict)
-
+    total_messages_sent = 0
     for sheet, phone_list in phone_numbers_dict.items():
         for phone_number in phone_list:
 
@@ -121,4 +121,7 @@ if st.button("Send Message"):
             )
             response_data = json.loads(response["response"])
             logger.info(f"{sheet}: {phone_number} --> {response_data}")
-            st.write(response_data)
+
+            total_messages_sent += 1
+            with st.empty():
+                st.write(f"Total messages sent: {total_messages_sent}")
