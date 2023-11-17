@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 def get_header_input(header_type):
     if header_type == "Image":
         return st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
+    elif header_type == "Video":
+        return st.file_uploader("Upload Video", type=["mp4", "3gp"])
+    else:
+        return None
 
 
 def get_phone_input(message_method):
@@ -46,7 +50,7 @@ all_templates = get_message_templates()
 selected_template = st.selectbox("Select Template Name", all_templates)
 
 # Header selection
-header_type = st.radio("Select Header Type", ["Text", "Image"])
+header_type = st.radio("Select Header Type", ["Text", "Image", "Video"])
 header_input = get_header_input(header_type)
 country_code = st.text_input("Enter Country Code", value="91")
 
@@ -88,19 +92,30 @@ st.info(selected_inputs)
 
 # Submit button
 if st.button("Send Message"):
-    image_component = None
+    media_component = None
     if header_input is not None:
-        image_content = upload_media(header_input.read(), header_input.type)
-        st.write(f"Uploaded image: {image_content}")
-        image_id = json.loads(image_content)["id"]
-        image_component = {
-            "type": "header",
-            "parameters": [{"type": "image", "image": {"id": image_id}}],
-        }
+        media_content = upload_media(header_input.read(), header_input.type)
+        st.write(f"Uploaded media: {media_content}")
+        media_id = json.loads(media_content)["id"]
+        if header_input.type == "video/mp4" or header_input.type == "video/3gp":
+            media_component = {
+                "type": "header",
+                "parameters": [
+                    {
+                        "type": "video",
+                        "video": {"id": media_id},
+                    }
+                ],
+            }
+        elif header_input.type == "image/png" or header_input.type == "image/jpeg":
+            media_component = {
+                "type": "header",
+                "parameters": [{"type": "image", "image": {"id": media_id}}],
+            }
 
     components = generate_components(variables)
-    if image_component:
-        components.insert(0, image_component)
+    if media_component:
+        components.insert(0, media_component)
 
     if phone_method == "Phone Number":
         phone_numbers_dict = {"phone_number": [phone_method_input]}

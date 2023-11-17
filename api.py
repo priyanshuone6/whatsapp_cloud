@@ -16,7 +16,11 @@ WHATSAPP_APP_ID = os.getenv("WHATSAPP_APP_ID")
 
 
 def generate_components(texts_list):
-    """Generates the components for the WhatsApp message."""
+    """
+    Generates the components for the WhatsApp message.
+
+    Ref: https://developers.facebook.com/docs/whatsapp/api/messages/message-templates/media-message-templates/
+    """
     # If all the texts in Variables are empty, return an empty list
     if all(element == "" for element in texts_list):
         return []
@@ -95,6 +99,10 @@ def upload_media(file_bytes, file_type):
         file_extension = ".jpeg"
     elif file_type == "image/png":
         file_extension = ".png"
+    elif file_type == "video/mp4":
+        file_extension = ".mp4"
+    elif file_type == "video/3gpp":
+        file_extension = ".3gp"
     else:
         raise ValueError("Unsupported file_type")
 
