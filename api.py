@@ -1,7 +1,6 @@
 import json
 import os
 import re
-import subprocess
 import tempfile
 
 import dotenv
@@ -12,50 +11,39 @@ dotenv.load_dotenv()
 WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
 WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
-WHATSAPP_APP_ID = os.getenv("WHATSAPP_APP_ID")
+
+LANGUAGE_CODES = {
+    "English_US": "en_US",
+    "Hindi": "hi",
+    "English": "en",
+}
 
 
 def generate_components(texts_list):
     """
     Generates the components for the WhatsApp message.
-
     Ref: https://developers.facebook.com/docs/whatsapp/api/messages/message-templates/media-message-templates/
     """
-    # If all the texts in Variables are empty, return an empty list
-    if all(element == "" for element in texts_list):
+    if all(text == "" for text in texts_list):
         return []
 
-    parameters = []
-    for text in texts_list:
-        component = {"type": "text", "text": text}
-        parameters.append(component)
-
-    output = [{"type": "body", "parameters": parameters}]
-    return output
+    parameters = [{"type": "text", "text": text} for text in texts_list]
+    return [{"type": "body", "parameters": parameters}]
 
 
-def send_whatsapp_message(
-    template_name,
-    language,
-    country_code,
-    phone_number,
-    components,
-):
-
-    if language == "English":
-        code = "en_US"
-    elif language == "Hindi":
-        code = "hi"
+def send_whatsapp_message(template_name, language, country_code, phone_number, components):
+    code = LANGUAGE_CODES.get(language)
+    if not code:
+        raise ValueError(f"Unsupported language: {language}")
 
     url = f"https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
     }
-
     data = {
         "messaging_product": "whatsapp",
-        "to": str(country_code) + str(phone_number),
+        "to": f"{country_code}{phone_number}",
         "type": "template",
         "template": {
             "name": template_name,
@@ -65,19 +53,17 @@ def send_whatsapp_message(
     }
 
     response = requests.post(url, headers=headers, json=data)
-
-    output = {"status_code": response.status_code, "response": response.text}
-    return output
+    response.raise_for_status()
+    return {"status_code": response.status_code, "response": response.text}
 
 
 def get_message_templates():
-
     url = f"https://graph.facebook.com/v17.0/{WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates"
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
     response = requests.get(url, headers=headers)
+    response.raise_for_status()
     response_data = response.json()
     names = [item["name"] for item in response_data.get("data", [])]
-
     return names
 
 
@@ -87,77 +73,54 @@ def upload_media(file_bytes, file_type):
     Parameters:
         file_bytes (bytes): The bytes of the file to upload.
         file_type (str): The MIME type of the file.
-
     Returns:
-        str: The ID of the uploaded file.
-
+        str: The response text from the API.
     Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
     """
-
-    # Determine the file extension from the file_type
-    if file_type == "image/jpeg" or file_type == "image/jpg":
-        file_extension = ".jpeg"
-    elif file_type == "image/png":
-        file_extension = ".png"
-    elif file_type == "video/mp4":
-        file_extension = ".mp4"
-    elif file_type == "video/3gpp":
-        file_extension = ".3gp"
-    else:
+    EXTENSIONS = {
+        "image/jpeg": ".jpeg",
+        "image/jpg": ".jpeg",
+        "image/png": ".png",
+        "video/mp4": ".mp4",
+        "video/3gpp": ".3gp",
+    }
+    file_extension = EXTENSIONS.get(file_type)
+    if not file_extension:
         raise ValueError("Unsupported file_type")
 
-    # Create a temporary file with the file_bytes
-    with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
+    url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/media"
+    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
+    data = {"messaging_product": "whatsapp", "type": file_type}
+
+    # Use a temporary file to name the file correctly
+    with tempfile.NamedTemporaryFile(suffix=file_extension) as temp_file:
         temp_file.write(file_bytes)
-        file_path = temp_file.name
-
-    # Construct the command
-    command = [
-        "curl",
-        "-X",
-        "POST",
-        f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/media",
-        "-H",
-        f"Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}",
-        "-F",
-        f'file=@"{file_path}"',
-        "-F",
-        f'type="{file_type}"',
-        "-F",
-        'messaging_product="whatsapp"',
-    ]
-
-    try:
-        # Run the command and capture the output
-        completed_process = subprocess.run(command, stdout=subprocess.PIPE, text=True)
-    finally:
-        # Ensure the temporary file is deleted after the work is done
-        os.remove(file_path)
-
-    return completed_process.stdout
+        temp_file.flush()  # Ensure data is written
+        with open(temp_file.name, "rb") as f:
+            files = {"file": (os.path.basename(temp_file.name), f, file_type)}
+            response = requests.post(url, headers=headers, files=files, data=data)
+            response.raise_for_status()
+            return response.text
 
 
-def excel_to_phone_list(file):
+def excel_to_phone_list(file_path):
     """
-    Extracts the mobile numbers from all the sheets in an Excel file.
-    Output: {sheet1_name: [mobile_numbers], sheet2_name: [mobile_numbers]}
+    Extracts mobile numbers from all sheets in an Excel file.
+    Returns: {sheet_name: [mobile_numbers]}
     """
     result = {}
-
     mobile_number_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
-    valid_number_pattern = re.compile(r"^.{10}$")
+    valid_number_pattern = re.compile(r"^\d{10}$")  # exactly 10 digits
 
-    wb = openpyxl.load_workbook(file)
+    wb = openpyxl.load_workbook(file_path)
     for sheet in wb.worksheets:
-        for column in sheet.iter_cols():
-            # Check if the column name contains a mobile number keyword
-            if mobile_number_pattern.search(column[0].value):
-                # Extract the mobile numbers from the column
+        for column in sheet.iter_cols(min_row=1, max_row=sheet.max_row):
+            header = column[0].value
+            if header and mobile_number_pattern.search(str(header)):
                 mobile_numbers = [
-                    cell.value
+                    str(cell.value).strip()
                     for cell in column[1:]
-                    if valid_number_pattern.search(str(cell.value))
+                    if cell.value and valid_number_pattern.match(str(cell.value))
                 ]
                 result[sheet.title] = mobile_numbers
-
     return result
