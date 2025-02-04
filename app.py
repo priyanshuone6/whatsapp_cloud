@@ -1,9 +1,14 @@
+import concurrent.futures
 import json
 import logging
+import os
 import re
-import concurrent.futures
 
 import streamlit as st
+import streamlit_authenticator as stauth
+import yaml
+from dotenv import load_dotenv
+from yaml.loader import SafeLoader
 
 from api import (
     excel_to_phone_list,
@@ -21,12 +26,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
+BUSINESS_CONFIG = {
+    "arena": {
+        "WHATSAPP_ACCESS_TOKEN": os.getenv("ARENA_WHATSAPP_ACCESS_TOKEN"),
+        "WHATSAPP_PHONE_NUMBER_ID": os.getenv("ARENA_WHATSAPP_PHONE_NUMBER_ID"),
+        "WHATSAPP_BUSINESS_ACCOUNT_ID": os.getenv("ARENA_WHATSAPP_BUSINESS_ACCOUNT_ID"),
+        "WHATSAPP_APP_ID": os.getenv("ARENA_WHATSAPP_APP_ID"),
+    },
+    "nexa": {
+        "WHATSAPP_ACCESS_TOKEN": os.getenv("NEXA_WHATSAPP_ACCESS_TOKEN"),
+        "WHATSAPP_PHONE_NUMBER_ID": os.getenv("NEXA_WHATSAPP_PHONE_NUMBER_ID"),
+        "WHATSAPP_BUSINESS_ACCOUNT_ID": os.getenv("NEXA_WHATSAPP_BUSINESS_ACCOUNT_ID"),
+        "WHATSAPP_APP_ID": os.getenv("NEXA_WHATSAPP_APP_ID"),
+    },
+}
+
 
 def get_header_input(header_type: str):
     """Return file uploader for image/video based on header_type."""
     types = {
-        "Image": ["jpg", "png", "jpeg"],
-        "Video": ["mp4", "3gp"],
+        "IMAGE": ["jpg", "png", "jpeg"],
+        "VIDEO": ["mp4", "3gp"],
     }
     if header_type in types:
         return st.file_uploader(f"Upload {header_type}", type=types[header_type])
@@ -46,13 +68,18 @@ def get_phone_input(message_method: str):
     return None
 
 
-def prepare_media_component(header_input):
+def prepare_media_component(business_name, header_input):
     """Upload media and prepare media component for WhatsApp API."""
     if not header_input:
         return None
 
     media_bytes = header_input.read()
-    media_response = upload_media(media_bytes, header_input.type)
+    media_response = upload_media(
+        BUSINESS_CONFIG[business_name]["WHATSAPP_PHONE_NUMBER_ID"],
+        BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
+        media_bytes,
+        header_input.type,
+    )
     st.write(f"Uploaded media: {media_response}")
     media_id = json.loads(media_response).get("id")
 
@@ -69,89 +96,156 @@ def prepare_media_component(header_input):
     return None
 
 
-def send_message(selected_template, language, country_code, phone_number, components, sheet):
-    """Send WhatsApp message and return message details."""
-    response = send_whatsapp_message(
-        template_name=selected_template,
-        language=language,
-        country_code=country_code,
-        phone_number=phone_number,
-        components=components,
-    )
-    return sheet, phone_number, response
-
-
 def main():
-    st.title("WhatsApp Message Sender")
 
-    # Template and header input
-    templates = get_message_templates()
-    selected_template = st.selectbox("Select Template Name", templates)
-    header_type = st.radio("Select Header Type", ["Text", "Image", "Video"])
-    header_input = get_header_input(header_type)
-    country_code = st.text_input("Enter Country Code", value="91")
+    with open("config.yaml") as file:
+        config = yaml.load(file, Loader=SafeLoader)
 
-    if country_code and not re.fullmatch(r"\d+", country_code):
-        st.error("Please enter a valid country code with only digits")
-        country_code = None
-
-    # Phone input method
-    message_method = st.radio("Select Phone Number Input Method", ["Phone Number", "Excel File"], key="message_method")
-    phone_input = get_phone_input(message_method)
-
-    language = st.selectbox("Select Language", ["Hindi", "English_US", "English"])
-    num_variables = st.selectbox("Select Number of Variables", list(range(1, 11)))
-    variables = [st.text_input(f"Variable {{ {i + 1} }}") for i in range(num_variables)]
-
-    # Show selected inputs
-    selected_inputs_md = f"""
-    - **Template Name:** {selected_template}
-    - **Header Type:** {header_type}
-    - **Country Code:** {country_code}
-    - **Phone Input Method:** {message_method}
-    - **Language:** {language}
-    - **Number of Variables:** {num_variables}
-    """
-    selected_inputs_md += "\n".join(
-        [f"- **Variable {{ {i + 1} }}:** {var or ''}" for i, var in enumerate(variables)]
+    authenticator = stauth.Authenticate(
+        config["credentials"],
+        config["cookie"]["name"],
+        config["cookie"]["key"],
+        config["cookie"]["expiry_days"],
     )
-    st.info(selected_inputs_md)
 
-    if st.button("Send Message"):
-        # Prepare media component and components list
-        media_component = prepare_media_component(header_input)
-        components = generate_components(variables)
-        if media_component:
-            components.insert(0, media_component)
+    try:
+        authenticator.login()
+    except Exception as e:
+        st.error(e)
 
-        # Process phone number(s)
-        phone_numbers_dict = {}
-        if message_method == "Phone Number" and phone_input:
-            phone_numbers_dict = {"Single": [phone_input]}
-        elif message_method == "Excel File" and phone_input:
-            phone_numbers_dict = excel_to_phone_list(phone_input)
+    if st.session_state["authentication_status"]:
 
-        # Flatten dict into list of (sheet, phone_number)
-        tasks = [(sheet, phone) for sheet, numbers in phone_numbers_dict.items() for phone in numbers]
-        total_tasks = len(tasks)
-        total_messages_sent = 0
-        progress_placeholder = st.empty()
+        business_name = st.session_state["name"]
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
-            futures = {
-                executor.submit(send_message, selected_template, language, country_code, phone, components, sheet): (sheet, phone)
-                for sheet, phone in tasks
-            }
-            for future in concurrent.futures.as_completed(futures):
-                sheet, phone = futures[future]
-                try:
-                    sheet_ret, phone_ret, response = future.result()
-                    response_data = json.loads(response.get("response", "{}"))
-                    logger.info(f"{sheet_ret}: {phone_ret} --> {response_data}")
-                except Exception as exc:
-                    logger.error(f"{sheet}: {phone} generated an exception: {exc}")
-                total_messages_sent += 1
-                progress_placeholder.write(f"Total messages sent: {total_messages_sent} out of {total_tasks}")
+        authenticator.logout()
+
+        st.title("WhatsApp Message Sender - " + business_name.upper())
+        # Template and header input
+        templates = get_message_templates(
+            BUSINESS_CONFIG[business_name]["WHATSAPP_BUSINESS_ACCOUNT_ID"],
+            BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
+        )
+        template_names = list(templates.keys())
+        selected_template = st.selectbox("Select Template Name", template_names)
+
+        if selected_template:
+            header_type = None
+            for component in templates[selected_template]["components"]:
+                if component["type"] == "HEADER":
+                    header_type = component["format"]
+                    break
+
+            st.write("Header Type: ", header_type)
+
+            header_input = get_header_input(header_type)
+            country_code = st.text_input("Enter Country Code", value="91")
+
+            if country_code and not re.fullmatch(r"\d+", country_code):
+                st.error("Please enter a valid country code with only digits")
+                country_code = None
+
+            # Phone input method
+            message_method = st.radio(
+                "Select Phone Number Input Method",
+                ["Phone Number", "Excel File"],
+                key="message_method",
+            )
+            phone_input = get_phone_input(message_method)
+
+            language = templates[selected_template]["language"]
+            st.write("Language: ", language)
+
+            num_variables = 0
+            for component in templates[selected_template]["components"]:
+                if component["type"] == "BODY":
+                    num_variables = len(
+                        component.get("example", {}).get("body_text", [[]])[0]
+                    )
+                    break
+            st.write("Number of Variables: ", num_variables)
+
+            # Create text inputs for variables
+            variables = [
+                st.text_input(f"Variable {{ {i + 1} }}") for i in range(num_variables)
+            ]
+
+            # Show selected inputs
+            selected_inputs_md = f"""
+            - **Template Name:** {selected_template}
+            - **Header Type:** {header_type}
+            - **Country Code:** {country_code}
+            - **Phone Input Method:** {message_method}
+            - **Language:** {language}
+            - **Number of Variables:** {num_variables}
+            """
+            selected_inputs_md += "\n".join(
+                [
+                    f"- **Variable {{ {i + 1} }}:** {var or ''}"
+                    for i, var in enumerate(variables)
+                ]
+            )
+            st.info(selected_inputs_md)
+
+            if st.button("Send Message"):
+                # If header_type is not TEXT and no media is uploaded, show an error and do not proceed.
+                if header_type and header_type.upper() != "TEXT" and not header_input:
+                    st.error(
+                        "Please upload the required media for the header (image/video) before sending the message."
+                    )
+                else:
+                    # Prepare media component and components list
+                    media_component = prepare_media_component(
+                        business_name, header_input
+                    )
+                    components = generate_components(variables)
+                    if media_component:
+                        components.insert(0, media_component)
+
+                    # Process phone number(s)
+                    phone_numbers_dict = {}
+                    if message_method == "Phone Number" and phone_input:
+                        phone_numbers_dict = {"Single": [phone_input]}
+                    elif message_method == "Excel File" and phone_input:
+                        phone_numbers_dict = excel_to_phone_list(phone_input)
+
+                    total_messages_sent = 0
+                    total_tasks = sum(
+                        len(phones) for phones in phone_numbers_dict.values()
+                    )
+                    progress_placeholder = st.empty()
+
+                    def send_message_task(phone_number):
+                        response = send_whatsapp_message(
+                            BUSINESS_CONFIG[business_name]["WHATSAPP_PHONE_NUMBER_ID"],
+                            BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
+                            template_name=selected_template,
+                            language_code=language,
+                            country_code=country_code,
+                            phone_number=phone_number,
+                            components=components,
+                        )
+                        response_data = json.loads(response["response"])
+
+                        return 1
+
+                    with concurrent.futures.ThreadPoolExecutor(
+                        max_workers=50
+                    ) as executor:
+                        futures = []
+                        for sheet, phone_list in phone_numbers_dict.items():
+                            for phone_number in phone_list:
+                                futures.append(
+                                    executor.submit(send_message_task, phone_number)
+                                )
+                        for future in concurrent.futures.as_completed(futures):
+                            total_messages_sent += future.result()
+                            progress_placeholder.write(
+                                f"Total messages sent: {total_messages_sent} out of {total_tasks}"
+                            )
+    elif st.session_state["authentication_status"] is False:
+        st.error("Username/password is incorrect")
+    elif st.session_state["authentication_status"] is None:
+        st.warning("Please enter your username and password")
 
 
 if __name__ == "__main__":

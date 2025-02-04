@@ -1,22 +1,10 @@
-import json
 import os
 import re
+import subprocess
 import tempfile
 
-import dotenv
 import openpyxl
 import requests
-
-dotenv.load_dotenv()
-WHATSAPP_ACCESS_TOKEN = os.getenv("WHATSAPP_ACCESS_TOKEN")
-WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID")
-WHATSAPP_BUSINESS_ACCOUNT_ID = os.getenv("WHATSAPP_BUSINESS_ACCOUNT_ID")
-
-LANGUAGE_CODES = {
-    "English_US": "en_US",
-    "Hindi": "hi",
-    "English": "en",
-}
 
 
 def generate_components(texts_list):
@@ -31,10 +19,15 @@ def generate_components(texts_list):
     return [{"type": "body", "parameters": parameters}]
 
 
-def send_whatsapp_message(template_name, language, country_code, phone_number, components):
-    code = LANGUAGE_CODES.get(language)
-    if not code:
-        raise ValueError(f"Unsupported language: {language}")
+def send_whatsapp_message(
+    WHATSAPP_PHONE_NUMBER_ID,
+    WHATSAPP_ACCESS_TOKEN,
+    template_name,
+    language_code,
+    country_code,
+    phone_number,
+    components,
+):
 
     url = f"https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
@@ -47,7 +40,7 @@ def send_whatsapp_message(template_name, language, country_code, phone_number, c
         "type": "template",
         "template": {
             "name": template_name,
-            "language": {"code": code},
+            "language": {"code": language_code},
             "components": components,
         },
     }
@@ -57,50 +50,75 @@ def send_whatsapp_message(template_name, language, country_code, phone_number, c
     return {"status_code": response.status_code, "response": response.text}
 
 
-def get_message_templates():
+def get_message_templates(WHATSAPP_BUSINESS_ACCOUNT_ID, WHATSAPP_ACCESS_TOKEN):
     url = f"https://graph.facebook.com/v17.0/{WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates"
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
     response = requests.get(url, headers=headers)
     response.raise_for_status()
     response_data = response.json()
-    names = [item["name"] for item in response_data.get("data", [])]
-    return names
+    response_data = response_data.get("data", [])
+    if not response_data:
+        return {}
+    response_data = {template["name"]: template for template in response_data}
+    return response_data
 
 
-def upload_media(file_bytes, file_type):
+def upload_media(
+    WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN, file_bytes, file_type
+):
     """
     Uploads a media file to WhatsApp Business API.
     Parameters:
         file_bytes (bytes): The bytes of the file to upload.
         file_type (str): The MIME type of the file.
+
     Returns:
-        str: The response text from the API.
+        str: The ID of the uploaded file.
+
     Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
     """
-    EXTENSIONS = {
-        "image/jpeg": ".jpeg",
-        "image/jpg": ".jpeg",
-        "image/png": ".png",
-        "video/mp4": ".mp4",
-        "video/3gpp": ".3gp",
-    }
-    file_extension = EXTENSIONS.get(file_type)
-    if not file_extension:
+
+    # Determine the file extension from the file_type
+    if file_type == "image/jpeg" or file_type == "image/jpg":
+        file_extension = ".jpeg"
+    elif file_type == "image/png":
+        file_extension = ".png"
+    elif file_type == "video/mp4":
+        file_extension = ".mp4"
+    elif file_type == "video/3gpp":
+        file_extension = ".3gp"
+    else:
         raise ValueError("Unsupported file_type")
 
-    url = f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/media"
-    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
-    data = {"messaging_product": "whatsapp", "type": file_type}
-
-    # Use a temporary file to name the file correctly
-    with tempfile.NamedTemporaryFile(suffix=file_extension) as temp_file:
+    # Create a temporary file with the file_bytes
+    with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
         temp_file.write(file_bytes)
-        temp_file.flush()  # Ensure data is written
-        with open(temp_file.name, "rb") as f:
-            files = {"file": (os.path.basename(temp_file.name), f, file_type)}
-            response = requests.post(url, headers=headers, files=files, data=data)
-            response.raise_for_status()
-            return response.text
+        file_path = temp_file.name
+
+    # Construct the command
+    command = [
+        "curl",
+        "-X",
+        "POST",
+        f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/media",
+        "-H",
+        f"Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}",
+        "-F",
+        f'file=@"{file_path}"',
+        "-F",
+        f'type="{file_type}"',
+        "-F",
+        'messaging_product="whatsapp"',
+    ]
+
+    try:
+        # Run the command and capture the output
+        completed_process = subprocess.run(command, stdout=subprocess.PIPE, text=True)
+    finally:
+        # Ensure the temporary file is deleted after the work is done
+        os.remove(file_path)
+
+    return completed_process.stdout
 
 
 def excel_to_phone_list(file_path):

@@ -1,0 +1,14 @@
+cookie:
+    expiry_days: 1
+    key: some_signature_key # Must be a string
+    name: streamlit_whatsapp
+credentials:
+    usernames:
+        username1:
+            name:
+            password:
+            email:
+        username2:
+            name:
+            password:
+            email:
