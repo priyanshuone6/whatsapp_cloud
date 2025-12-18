@@ -58,7 +58,10 @@ def get_message_templates(WHATSAPP_BUSINESS_ACCOUNT_ID, WHATSAPP_ACCESS_TOKEN):
     response_data = response_data.get("data", [])
     if not response_data:
         return {}
-    response_data = {template["name"]: template for template in response_data}
+
+    # Filter only approved templates
+    approved_templates = [template for template in response_data if template.get("status") == "APPROVED"]
+    response_data = {template["name"]: template for template in approved_templates}
     return response_data
 
 

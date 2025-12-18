@@ -276,8 +276,8 @@ def main():
                             )
 
                     # Display final summary
-                    st.success(
-                        f"**Completed!** ✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed}"
+                    progress_placeholder.success(
+                        f"**Completed!** ✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed} | Total: {total_tasks}"
                     )
 
                     # Show failed numbers in expandable section
