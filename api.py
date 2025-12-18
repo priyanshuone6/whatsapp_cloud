@@ -28,8 +28,7 @@ def send_whatsapp_message(
     phone_number,
     components,
 ):
-
-    url = f"https://graph.facebook.com/v17.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
+    url = f"https://graph.facebook.com/v24.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
     headers = {
         "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
         "Content-Type": "application/json",
@@ -51,7 +50,7 @@ def send_whatsapp_message(
 
 
 def get_message_templates(WHATSAPP_BUSINESS_ACCOUNT_ID, WHATSAPP_ACCESS_TOKEN):
-    url = f"https://graph.facebook.com/v17.0/{WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates"
+    url = f"https://graph.facebook.com/v24.0/{WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates"
     headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
     response = requests.get(url, headers=headers)
     response.raise_for_status()
@@ -100,7 +99,7 @@ def upload_media(
         "curl",
         "-X",
         "POST",
-        f"https://graph.facebook.com/v18.0/{WHATSAPP_PHONE_NUMBER_ID}/media",
+        f"https://graph.facebook.com/v24.0/{WHATSAPP_PHONE_NUMBER_ID}/media",
         "-H",
         f"Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}",
         "-F",

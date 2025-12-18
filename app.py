@@ -103,7 +103,6 @@ def prepare_media_component(business_name, header_input):
 
 
 def main():
-
     with open("config.yaml") as file:
         config = yaml.load(file, Loader=SafeLoader)
 
@@ -120,18 +119,24 @@ def main():
         st.error(e)
 
     if st.session_state["authentication_status"]:
-
         business_name = st.session_state["name"]
 
         authenticator.logout()
 
         st.title("WhatsApp Message Sender - " + business_name.upper())
         # Template and header input
-        templates = get_message_templates(
-            BUSINESS_CONFIG[business_name]["WHATSAPP_BUSINESS_ACCOUNT_ID"],
-            BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
-        )
-        template_names = list(templates.keys())
+        try:
+            templates = get_message_templates(
+                BUSINESS_CONFIG[business_name]["WHATSAPP_BUSINESS_ACCOUNT_ID"],
+                BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
+            )
+            template_names = list(templates.keys())
+        except Exception as e:
+            st.error(f"⚠️ Failed to load templates: {str(e)}")
+            st.info(
+                "Please verify:\n- Access token is valid and not expired\n- Token has required permissions\n- Business Account ID is correct"
+            )
+            return
         selected_template = st.selectbox("Select Template Name", template_names)
 
         if selected_template:
@@ -215,24 +220,37 @@ def main():
                         phone_numbers_dict = excel_to_phone_list(phone_input)
 
                     total_messages_sent = 0
+                    total_messages_failed = 0
                     total_tasks = sum(
                         len(phones) for phones in phone_numbers_dict.values()
                     )
                     progress_placeholder = st.empty()
+                    failed_numbers = []
 
                     def send_message_task(phone_number):
-                        response = send_whatsapp_message(
-                            BUSINESS_CONFIG[business_name]["WHATSAPP_PHONE_NUMBER_ID"],
-                            BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
-                            template_name=selected_template,
-                            language_code=language,
-                            country_code=country_code,
-                            phone_number=phone_number,
-                            components=components,
-                        )
-                        response_data = json.loads(response["response"])
-
-                        return 1
+                        try:
+                            response = send_whatsapp_message(
+                                BUSINESS_CONFIG[business_name][
+                                    "WHATSAPP_PHONE_NUMBER_ID"
+                                ],
+                                BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
+                                template_name=selected_template,
+                                language_code=language,
+                                country_code=country_code,
+                                phone_number=phone_number,
+                                components=components,
+                            )
+                            response_data = json.loads(response["response"])
+                            logger.info(f"Message sent successfully to {phone_number}")
+                            return {"success": True, "phone": phone_number}
+                        except Exception as e:
+                            error_msg = f"Failed to send to {phone_number}: {str(e)}"
+                            logger.error(error_msg)
+                            return {
+                                "success": False,
+                                "phone": phone_number,
+                                "error": str(e),
+                            }
 
                     with concurrent.futures.ThreadPoolExecutor(
                         max_workers=50
@@ -244,9 +262,52 @@ def main():
                                     executor.submit(send_message_task, phone_number)
                                 )
                         for future in concurrent.futures.as_completed(futures):
-                            total_messages_sent += future.result()
+                            result = future.result()
+                            if result["success"]:
+                                total_messages_sent += 1
+                            else:
+                                total_messages_failed += 1
+                                failed_numbers.append(
+                                    {"phone": result["phone"], "error": result["error"]}
+                                )
+
                             progress_placeholder.write(
-                                f"Total messages sent: {total_messages_sent} out of {total_tasks}"
+                                f"✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed} | Total: {total_tasks}"
+                            )
+
+                    # Display final summary
+                    st.success(
+                        f"**Completed!** ✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed}"
+                    )
+
+                    # Show failed numbers in expandable section
+                    if failed_numbers:
+                        with st.expander(
+                            f"❌ View {len(failed_numbers)} Failed Numbers",
+                            expanded=False,
+                        ):
+                            # Create table with two columns
+                            import pandas as pd
+
+                            df = pd.DataFrame(
+                                failed_numbers, columns=["phone", "error"]
+                            )
+                            df.columns = ["Phone Number", "Error Message"]
+                            df.index = range(1, len(df) + 1)
+                            st.dataframe(df, use_container_width=True)
+
+                            # Create downloadable list
+                            failed_list = "\n".join(
+                                [
+                                    f"{i}. {f['phone']} - {f['error']}"
+                                    for i, f in enumerate(failed_numbers, 1)
+                                ]
+                            )
+                            st.download_button(
+                                label="📥 Download Failed Numbers",
+                                data=failed_list,
+                                file_name=f"failed_numbers_{selected_template}.txt",
+                                mime="text/plain",
                             )
     elif st.session_state["authentication_status"] is False:
         st.error("Username/password is incorrect")
