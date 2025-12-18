@@ -56,8 +56,23 @@ def get_header_input(header_type: str):
         "IMAGE": ["jpg", "png", "jpeg"],
         "VIDEO": ["mp4", "3gp"],
     }
+    size_limits = {
+        "IMAGE": 5,  # MB
+        "VIDEO": 16,  # MB
+    }
     if header_type in types:
-        return st.file_uploader(f"Upload {header_type}", type=types[header_type])
+        uploaded_file = st.file_uploader(
+            f"Upload {header_type}",
+            type=types[header_type],
+            help=f"⚠️ WhatsApp limit: Maximum {size_limits[header_type]}MB (Streamlit allows larger files but WhatsApp will reject them)"
+        )
+        if uploaded_file:
+            file_size_mb = uploaded_file.size / (1024 * 1024)
+            if file_size_mb > size_limits[header_type]:
+                st.error(f"❌ File too large! {file_size_mb:.2f}MB exceeds WhatsApp's {size_limits[header_type]}MB limit. Please compress or use a smaller file.")
+                return None
+            st.success(f"✓ File size: {file_size_mb:.2f}MB (Within WhatsApp's {size_limits[header_type]}MB limit)")
+        return uploaded_file
     return None
 
 
@@ -79,15 +94,23 @@ def prepare_media_component(business_name, header_input):
     if not header_input:
         return None
 
-    media_bytes = header_input.read()
-    media_response = upload_media(
-        BUSINESS_CONFIG[business_name]["WHATSAPP_PHONE_NUMBER_ID"],
-        BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
-        media_bytes,
-        header_input.type,
-    )
-    st.write(f"Uploaded media: {media_response}")
-    media_id = json.loads(media_response).get("id")
+    try:
+        media_bytes = header_input.read()
+        media_response = upload_media(
+            BUSINESS_CONFIG[business_name]["WHATSAPP_PHONE_NUMBER_ID"],
+            BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
+            media_bytes,
+            header_input.type,
+        )
+        st.write(f"Uploaded media: {media_response}")
+        media_id = json.loads(media_response).get("id")
+    except Exception as e:
+        error_msg = str(e)
+        if "413" in error_msg or "Payload Too Large" in error_msg:
+            st.error("❌ Media upload failed: File is too large. Please use a smaller file (Images: max 5MB, Videos: max 16MB)")
+        else:
+            st.error(f"❌ Media upload failed: {error_msg}")
+        raise
 
     if header_input.type in ["video/mp4", "video/3gp"]:
         return {
@@ -241,7 +264,15 @@ def main():
                                 components=components,
                             )
                             response_data = json.loads(response["response"])
-                            logger.info(f"Message sent successfully to {phone_number}")
+                            logger.info(f"Message sent to {phone_number}. Response: {response['response']}")
+                            
+                            # Check if response contains an error despite 200 status
+                            if "error" in response_data:
+                                error_details = response_data["error"]
+                                error_message = f"{error_details.get('message', 'Unknown error')} (Code: {error_details.get('code', 'N/A')})"
+                                logger.error(f"API returned error for {phone_number}: {error_message}")
+                                return {"success": False, "phone": phone_number, "error": error_message}
+                            
                             return {"success": True, "phone": phone_number}
                         except Exception as e:
                             error_msg = f"Failed to send to {phone_number}: {str(e)}"

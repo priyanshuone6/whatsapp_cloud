@@ -75,7 +75,7 @@ def upload_media(
         file_type (str): The MIME type of the file.
 
     Returns:
-        str: The ID of the uploaded file.
+        str: The JSON response from the upload.
 
     Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
     """
@@ -92,35 +92,26 @@ def upload_media(
     else:
         raise ValueError("Unsupported file_type")
 
-    # Create a temporary file with the file_bytes
-    with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
-        temp_file.write(file_bytes)
-        file_path = temp_file.name
-
-    # Construct the command
-    command = [
-        "curl",
-        "-X",
-        "POST",
-        f"https://graph.facebook.com/v24.0/{WHATSAPP_PHONE_NUMBER_ID}/media",
-        "-H",
-        f"Authorization: Bearer {WHATSAPP_ACCESS_TOKEN}",
-        "-F",
-        f'file=@"{file_path}"',
-        "-F",
-        f'type="{file_type}"',
-        "-F",
-        'messaging_product="whatsapp"',
-    ]
+    url = f"https://graph.facebook.com/v24.0/{WHATSAPP_PHONE_NUMBER_ID}/media"
+    headers = {
+        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
+    }
+    
+    files = {
+        "file": (f"media{file_extension}", file_bytes, file_type),
+        "messaging_product": (None, "whatsapp"),
+        "type": (None, file_type),
+    }
 
     try:
-        # Run the command and capture the output
-        completed_process = subprocess.run(command, stdout=subprocess.PIPE, text=True)
-    finally:
-        # Ensure the temporary file is deleted after the work is done
-        os.remove(file_path)
-
-    return completed_process.stdout
+        response = requests.post(url, headers=headers, files=files)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 413:
+            raise Exception(f"File too large ({len(file_bytes) / (1024*1024):.2f}MB). WhatsApp limit is 5MB for images, 16MB for videos.")
+        else:
+            raise Exception(f"Upload failed: {e.response.status_code} - {e.response.text}")
 
 
 def excel_to_phone_list(file_path):
