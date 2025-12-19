@@ -1,137 +1,222 @@
-import os
+"""
+WhatsApp Cloud API wrapper using pywa library.
+"""
+
+import json
+import logging
 import re
-import subprocess
-import tempfile
+from typing import Optional
 
 import openpyxl
-import requests
+from pywa import WhatsApp
+from pywa.types.templates import BodyText, TemplateStatus
+
+logger = logging.getLogger(__name__)
+
+# Cache for WhatsApp client instances
+_clients: dict[str, WhatsApp] = {}
 
 
-def generate_components(texts_list):
+def _get_client(phone_id: str, token: str, waba_id: str = None) -> WhatsApp:
+    """Get or create a cached WhatsApp client instance."""
+    key = f"{phone_id}:{token[:10]}"
+    if key not in _clients:
+        _clients[key] = WhatsApp(
+            phone_id=phone_id,
+            token=token,
+            business_account_id=waba_id,
+            api_version=24.0,
+        )
+    return _clients[key]
+
+
+def generate_components(texts_list: list) -> Optional[BodyText]:
     """
-    Generates the components for the WhatsApp message.
-    Ref: https://developers.facebook.com/docs/whatsapp/api/messages/message-templates/media-message-templates/
-    """
-    if all(text == "" for text in texts_list):
-        return []
+    Generate body text params for WhatsApp template.
 
-    parameters = [{"type": "text", "text": text} for text in texts_list]
-    return [{"type": "body", "parameters": parameters}]
+    Args:
+        texts_list: List of text values for template body parameters
+
+    Returns:
+        BodyText params object or None if no texts
+    """
+    filtered = [str(t) for t in texts_list if t]
+    return BodyText.params(*filtered) if filtered else None
 
 
 def send_whatsapp_message(
-    WHATSAPP_PHONE_NUMBER_ID,
-    WHATSAPP_ACCESS_TOKEN,
-    template_name,
-    language_code,
-    country_code,
-    phone_number,
-    components,
-):
-    url = f"https://graph.facebook.com/v24.0/{WHATSAPP_PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    data = {
-        "messaging_product": "whatsapp",
-        "to": f"{country_code}{phone_number}",
-        "type": "template",
-        "template": {
-            "name": template_name,
-            "language": {"code": language_code},
+    WHATSAPP_PHONE_NUMBER_ID: str,
+    WHATSAPP_ACCESS_TOKEN: str,
+    template_name: str,
+    language_code: str,
+    country_code: str,
+    phone_number: str,
+    components: Optional[list] = None,
+) -> dict:
+    """
+    Send a WhatsApp template message.
+
+    Args:
+        WHATSAPP_PHONE_NUMBER_ID: WhatsApp Phone Number ID
+        WHATSAPP_ACCESS_TOKEN: WhatsApp Access Token
+        template_name: Name of the approved template
+        language_code: Template language code (e.g., 'en', 'en_US')
+        country_code: Country code for phone number
+        phone_number: Recipient phone number (without country code)
+        components: List of pywa params (BodyText.params, HeaderImage.params, etc.)
+
+    Returns:
+        Dict with 'status_code' and 'response' keys
+    """
+    client = _get_client(WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN)
+    full_phone = f"{country_code}{phone_number}"
+
+    # Convert string language code to TemplateLanguage enum
+    from pywa.types.templates import TemplateLanguage
+
+    try:
+        language = TemplateLanguage(language_code)
+    except ValueError:
+        language = language_code  # Fallback to string if not in enum
+
+    logger.info(f"Sending '{template_name}' to {full_phone}, lang={language}")
+
+    try:
+        result = client.send_template(
+            to=full_phone,
+            name=template_name,
+            language=language,
+            params=components,
+        )
+
+        logger.info(f"Message sent: {result.id}")
+        return {
+            "status_code": 200,
+            "response": json.dumps(
+                {
+                    "messaging_product": "whatsapp",
+                    "contacts": [{"wa_id": full_phone}],
+                    "messages": [{"id": result.id}],
+                }
+            ),
+        }
+
+    except Exception as e:
+        logger.error(f"Send failed: {e}")
+        raise
+
+
+def get_message_templates(
+    WHATSAPP_BUSINESS_ACCOUNT_ID: str, WHATSAPP_ACCESS_TOKEN: str
+) -> dict:
+    """
+    Get approved message templates from WhatsApp Business Account.
+
+    Returns:
+        Dict mapping template names to template details
+    """
+    client = WhatsApp(
+        token=WHATSAPP_ACCESS_TOKEN,
+        business_account_id=WHATSAPP_BUSINESS_ACCOUNT_ID,
+        api_version=24.0,
+    )
+
+    templates = {}
+    for t in client.get_templates(statuses=[TemplateStatus.APPROVED]):
+        # Convert pywa template to dict format expected by app.py
+        components = []
+        if hasattr(t, "components") and t.components:
+            for comp in t.components:
+                comp_dict = {
+                    "type": (
+                        comp.type.value
+                        if hasattr(comp.type, "value")
+                        else str(comp.type)
+                    )
+                }
+                if hasattr(comp, "text") and comp.text:
+                    comp_dict["text"] = comp.text
+                if hasattr(comp, "format") and comp.format:
+                    comp_dict["format"] = (
+                        comp.format.value
+                        if hasattr(comp.format, "value")
+                        else str(comp.format)
+                    )
+                if hasattr(comp, "example") and comp.example:
+                    # pywa returns example as tuple, convert to API format {"body_text": [[...]]}
+                    example = comp.example
+                    if isinstance(example, (tuple, list)) and len(example) > 0:
+                        comp_dict["example"] = {"body_text": [list(example)]}
+                    else:
+                        comp_dict["example"] = example
+                components.append(comp_dict)
+
+        templates[t.name] = {
+            "status": t.status.value if hasattr(t.status, "value") else t.status,
             "components": components,
-        },
-    }
+            "language": (
+                t.language.value if hasattr(t.language, "value") else t.language
+            ),
+        }
 
-    response = requests.post(url, headers=headers, json=data)
-    response.raise_for_status()
-    return {"status_code": response.status_code, "response": response.text}
-
-
-def get_message_templates(WHATSAPP_BUSINESS_ACCOUNT_ID, WHATSAPP_ACCESS_TOKEN):
-    url = f"https://graph.facebook.com/v24.0/{WHATSAPP_BUSINESS_ACCOUNT_ID}/message_templates"
-    headers = {"Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    response_data = response.json()
-    response_data = response_data.get("data", [])
-    if not response_data:
-        return {}
-
-    # Filter only approved templates
-    approved_templates = [template for template in response_data if template.get("status") == "APPROVED"]
-    response_data = {template["name"]: template for template in approved_templates}
-    return response_data
+    return templates
 
 
 def upload_media(
-    WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN, file_bytes, file_type
-):
+    WHATSAPP_PHONE_NUMBER_ID: str,
+    WHATSAPP_ACCESS_TOKEN: str,
+    file_bytes: bytes,
+    file_type: str,
+) -> str:
     """
-    Uploads a media file to WhatsApp Business API.
-    Parameters:
-        file_bytes (bytes): The bytes of the file to upload.
-        file_type (str): The MIME type of the file.
+    Upload media to WhatsApp.
 
     Returns:
-        str: The JSON response from the upload.
-
-    Docs: https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
+        JSON string with media upload response
     """
-
-    # Determine the file extension from the file_type
-    if file_type == "image/jpeg" or file_type == "image/jpg":
-        file_extension = ".jpeg"
-    elif file_type == "image/png":
-        file_extension = ".png"
-    elif file_type == "video/mp4":
-        file_extension = ".mp4"
-    elif file_type == "video/3gpp":
-        file_extension = ".3gp"
-    else:
-        raise ValueError("Unsupported file_type")
-
-    url = f"https://graph.facebook.com/v24.0/{WHATSAPP_PHONE_NUMBER_ID}/media"
-    headers = {
-        "Authorization": f"Bearer {WHATSAPP_ACCESS_TOKEN}",
-    }
-    
-    files = {
-        "file": (f"media{file_extension}", file_bytes, file_type),
-        "messaging_product": (None, "whatsapp"),
-        "type": (None, file_type),
+    ext_map = {
+        "image/jpeg": ".jpeg",
+        "image/jpg": ".jpeg",
+        "image/png": ".png",
+        "video/mp4": ".mp4",
+        "video/3gpp": ".3gp",
     }
 
-    try:
-        response = requests.post(url, headers=headers, files=files)
-        response.raise_for_status()
-        return response.text
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 413:
-            raise Exception(f"File too large ({len(file_bytes) / (1024*1024):.2f}MB). WhatsApp limit is 5MB for images, 16MB for videos.")
-        else:
-            raise Exception(f"Upload failed: {e.response.status_code} - {e.response.text}")
+    if file_type not in ext_map:
+        raise ValueError(f"Unsupported file type: {file_type}")
+
+    client = _get_client(WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_ACCESS_TOKEN)
+
+    media = client.upload_media(
+        media=file_bytes,
+        mime_type=file_type,
+        filename=f"media{ext_map[file_type]}",
+    )
+
+    return json.dumps({"id": media.id})
 
 
-def excel_to_phone_list(file_path):
+def excel_to_phone_list(file_path) -> dict:
     """
-    Extracts mobile numbers from all sheets in an Excel file.
-    Returns: {sheet_name: [mobile_numbers]}
+    Read phone numbers from Excel file.
+
+    Returns:
+        Dict mapping sheet names to lists of phone numbers
     """
     result = {}
-    mobile_number_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
-    valid_number_pattern = re.compile(r"^\d{10}$")  # exactly 10 digits
+    mobile_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
+    valid_pattern = re.compile(r"^\d{10}$")
 
     wb = openpyxl.load_workbook(file_path)
     for sheet in wb.worksheets:
         for column in sheet.iter_cols(min_row=1, max_row=sheet.max_row):
             header = column[0].value
-            if header and mobile_number_pattern.search(str(header)):
-                mobile_numbers = [
+            if header and mobile_pattern.search(str(header)):
+                numbers = [
                     str(cell.value).strip()
                     for cell in column[1:]
-                    if cell.value and valid_number_pattern.match(str(cell.value))
+                    if cell.value and valid_pattern.match(str(cell.value))
                 ]
-                result[sheet.title] = mobile_numbers
+                result[sheet.title] = numbers
+
     return result

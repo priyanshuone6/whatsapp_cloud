@@ -64,14 +64,18 @@ def get_header_input(header_type: str):
         uploaded_file = st.file_uploader(
             f"Upload {header_type}",
             type=types[header_type],
-            help=f"⚠️ WhatsApp limit: Maximum {size_limits[header_type]}MB (Streamlit allows larger files but WhatsApp will reject them)"
+            help=f"⚠️ WhatsApp limit: Maximum {size_limits[header_type]}MB (Streamlit allows larger files but WhatsApp will reject them)",
         )
         if uploaded_file:
             file_size_mb = uploaded_file.size / (1024 * 1024)
             if file_size_mb > size_limits[header_type]:
-                st.error(f"❌ File too large! {file_size_mb:.2f}MB exceeds WhatsApp's {size_limits[header_type]}MB limit. Please compress or use a smaller file.")
+                st.error(
+                    f"❌ File too large! {file_size_mb:.2f}MB exceeds WhatsApp's {size_limits[header_type]}MB limit. Please compress or use a smaller file."
+                )
                 return None
-            st.success(f"✓ File size: {file_size_mb:.2f}MB (Within WhatsApp's {size_limits[header_type]}MB limit)")
+            st.success(
+                f"✓ File size: {file_size_mb:.2f}MB (Within WhatsApp's {size_limits[header_type]}MB limit)"
+            )
         return uploaded_file
     return None
 
@@ -90,7 +94,9 @@ def get_phone_input(message_method: str):
 
 
 def prepare_media_component(business_name, header_input):
-    """Upload media and prepare media component for WhatsApp API."""
+    """Upload media and prepare pywa header params for WhatsApp API."""
+    from pywa.types.templates import HeaderImage, HeaderVideo
+
     if not header_input:
         return None
 
@@ -107,21 +113,18 @@ def prepare_media_component(business_name, header_input):
     except Exception as e:
         error_msg = str(e)
         if "413" in error_msg or "Payload Too Large" in error_msg:
-            st.error("❌ Media upload failed: File is too large. Please use a smaller file (Images: max 5MB, Videos: max 16MB)")
+            st.error(
+                "❌ Media upload failed: File is too large. Please use a smaller file (Images: max 5MB, Videos: max 16MB)"
+            )
         else:
             st.error(f"❌ Media upload failed: {error_msg}")
         raise
 
+    # Use pywa's native header types
     if header_input.type in ["video/mp4", "video/3gp"]:
-        return {
-            "type": "header",
-            "parameters": [{"type": "video", "video": {"id": media_id}}],
-        }
+        return HeaderVideo.params(video=media_id)
     elif header_input.type in ["image/png", "image/jpeg"]:
-        return {
-            "type": "header",
-            "parameters": [{"type": "image", "image": {"id": media_id}}],
-        }
+        return HeaderImage.params(image=media_id)
     return None
 
 
@@ -227,13 +230,21 @@ def main():
                         "Please upload the required media for the header (image/video) before sending the message."
                     )
                 else:
-                    # Prepare media component and components list
+                    # Prepare media header and body params (pywa format)
                     media_component = prepare_media_component(
                         business_name, header_input
                     )
-                    components = generate_components(variables)
+                    body_component = generate_components(variables)
+
+                    # Build params list for pywa
+                    components = []
                     if media_component:
-                        components.insert(0, media_component)
+                        components.append(media_component)
+                    if body_component:
+                        components.append(body_component)
+
+                    # Pass None if empty, otherwise pass the list
+                    components = components if components else None
 
                     # Process phone number(s)
                     phone_numbers_dict = {}
@@ -264,15 +275,23 @@ def main():
                                 components=components,
                             )
                             response_data = json.loads(response["response"])
-                            logger.info(f"Message sent to {phone_number}. Response: {response['response']}")
-                            
+                            logger.info(
+                                f"Message sent to {phone_number}. Response: {response['response']}"
+                            )
+
                             # Check if response contains an error despite 200 status
                             if "error" in response_data:
                                 error_details = response_data["error"]
                                 error_message = f"{error_details.get('message', 'Unknown error')} (Code: {error_details.get('code', 'N/A')})"
-                                logger.error(f"API returned error for {phone_number}: {error_message}")
-                                return {"success": False, "phone": phone_number, "error": error_message}
-                            
+                                logger.error(
+                                    f"API returned error for {phone_number}: {error_message}"
+                                )
+                                return {
+                                    "success": False,
+                                    "phone": phone_number,
+                                    "error": error_message,
+                                }
+
                             return {"success": True, "phone": phone_number}
                         except Exception as e:
                             error_msg = f"Failed to send to {phone_number}: {str(e)}"

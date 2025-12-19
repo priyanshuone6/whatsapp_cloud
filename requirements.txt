@@ -3,3 +3,4 @@ python-dotenv
 requests
 openpyxl
 streamlit-authenticator
+pywa
