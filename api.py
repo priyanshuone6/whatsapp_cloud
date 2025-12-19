@@ -200,12 +200,16 @@ def excel_to_phone_list(file_path) -> dict:
     """
     Read phone numbers from Excel file.
 
+    Args:
+        file_path: Path to Excel file
+
     Returns:
-        Dict mapping sheet names to lists of phone numbers
+        Dict mapping sheet names to lists of phone numbers (accepts any length)
     """
     result = {}
     mobile_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
-    valid_pattern = re.compile(r"^\d{10}$")
+    # Accept any phone number with digits (no length restriction for international support)
+    valid_pattern = re.compile(r"^\d+$")
 
     wb = openpyxl.load_workbook(file_path)
     for sheet in wb.worksheets:
@@ -213,9 +217,10 @@ def excel_to_phone_list(file_path) -> dict:
             header = column[0].value
             if header and mobile_pattern.search(str(header)):
                 numbers = [
-                    str(cell.value).strip()
+                    str(cell.value).strip().lstrip("+")
                     for cell in column[1:]
-                    if cell.value and valid_pattern.match(str(cell.value))
+                    if cell.value
+                    and valid_pattern.match(str(cell.value).strip().lstrip("+"))
                 ]
                 result[sheet.title] = numbers
 

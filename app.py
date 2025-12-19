@@ -3,11 +3,15 @@ import json
 import logging
 import os
 import re
+import time
+from threading import Lock
 
+import pandas as pd
 import streamlit as st
 import streamlit_authenticator as stauth
 import yaml
 from dotenv import load_dotenv
+from pywa.types.templates import HeaderImage, HeaderVideo
 from yaml.loader import SafeLoader
 
 from api import (
@@ -16,6 +20,104 @@ from api import (
     get_message_templates,
     send_whatsapp_message,
     upload_media,
+)
+
+# Page config
+st.set_page_config(
+    page_title="WhatsApp Sender",
+    page_icon="💬",
+    layout="centered",
+    initial_sidebar_state="collapsed",
+)
+
+# Custom CSS
+st.markdown(
+    """
+<style>
+    /* Main container */
+    .stApp {
+        background: #ffffff;
+    }
+    
+    /* Headers */
+    h1 {
+        color: #25D366;
+        font-weight: 600 !important;
+        margin-bottom: 0.5rem !important;
+    }
+    
+    h4 {
+        color: #075E54;
+        font-weight: 500 !important;
+        margin-top: 1.5rem !important;
+        margin-bottom: 0.8rem !important;
+    }
+    
+    /* Input fields */
+    .stTextInput input, .stSelectbox select {
+        border-radius: 8px !important;
+    }
+    
+    /* Radio buttons */
+    .stRadio > label {
+        font-weight: 500;
+        color: #075E54;
+    }
+    
+    /* File uploader */
+    [data-testid="stFileUploader"] {
+        border: 2px dashed #25D366;
+        border-radius: 8px;
+        padding: 1rem;
+        background-color: #f0fdf4;
+    }
+    
+    /* Dataframe */
+    [data-testid="stDataFrame"] {
+        border-radius: 8px;
+        overflow: hidden;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    }
+    
+    
+    /* Divider */
+    hr {
+        margin: 1.5rem 0;
+        border-color: #E0E0E0;
+    }
+    
+    /* Progress bar */
+    .stProgress > div > div {
+        background: linear-gradient(90deg, #25D366 0%, #128C7E 100%);
+    }
+    
+    /* Success/Error messages */
+    .stSuccess {
+        background-color: #d1fae5;
+        border-left: 4px solid #25D366;
+        border-radius: 6px;
+    }
+    
+    .stError {
+        border-left: 4px solid #dc2626;
+        border-radius: 6px;
+    }
+    
+    /* Captions */
+    .stCaptionContainer {
+        color: #6b7280;
+    }
+    
+    /* Cards effect for sections */
+    [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlock"] {
+        background-color: white;
+        border-radius: 12px;
+        padding: 1rem;
+        margin: 0.5rem 0;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
 )
 
 # Set up logging
@@ -83,10 +185,17 @@ def get_header_input(header_type: str):
 def get_phone_input(message_method: str):
     """Return phone input based on method selection."""
     if message_method == "Phone Number":
-        phone = st.text_input("Enter Phone Number")
-        if phone and (len(phone) != 10 or not phone.isdigit()):
-            st.error("Enter a valid 10-digit phone number")
-            return None
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            phone = st.text_input(
+                "Phone Number",
+                help="Digits only (no spaces, dashes, or special characters)",
+            )
+            if phone:
+                # Check if input contains only digits
+                if not phone.isdigit():
+                    st.error("❌ Only digits allowed (0-9)")
+                    return None
         return phone
     elif message_method == "Excel File":
         return st.file_uploader("Upload xlsx file", type=["xlsx"])
@@ -95,8 +204,6 @@ def get_phone_input(message_method: str):
 
 def prepare_media_component(business_name, header_input):
     """Upload media and prepare pywa header params for WhatsApp API."""
-    from pywa.types.templates import HeaderImage, HeaderVideo
-
     if not header_input:
         return None
 
@@ -108,8 +215,8 @@ def prepare_media_component(business_name, header_input):
             media_bytes,
             header_input.type,
         )
-        st.write(f"Uploaded media: {media_response}")
         media_id = json.loads(media_response).get("id")
+        st.success(f"✅ Media uploaded successfully! ID: `{media_id}`")
     except Exception as e:
         error_msg = str(e)
         if "413" in error_msg or "Payload Too Large" in error_msg:
@@ -147,9 +254,15 @@ def main():
     if st.session_state["authentication_status"]:
         business_name = st.session_state["name"]
 
-        authenticator.logout()
+        # Header with logout
+        col1, col2 = st.columns([5, 1])
+        with col1:
+            st.title(f"💬 WhatsApp Sender - {business_name.upper()}")
+        with col2:
+            authenticator.logout()
 
-        st.title("WhatsApp Message Sender - " + business_name.upper())
+        st.markdown("---")
+
         # Template and header input
         try:
             templates = get_message_templates(
@@ -163,7 +276,13 @@ def main():
                 "Please verify:\n- Access token is valid and not expired\n- Token has required permissions\n- Business Account ID is correct"
             )
             return
-        selected_template = st.selectbox("Select Template Name", template_names)
+
+        # Template Selection
+        with st.container():
+            st.markdown("#### 📋 Select Template")
+            selected_template = st.selectbox(
+                "Template", template_names, label_visibility="collapsed"
+            )
 
         if selected_template:
             header_type = None
@@ -172,58 +291,111 @@ def main():
                     header_type = component["format"]
                     break
 
-            st.write("Header Type: ", header_type)
-
-            header_input = get_header_input(header_type)
-            country_code = st.text_input("Enter Country Code", value="91")
-
-            if country_code and not re.fullmatch(r"\d+", country_code):
-                st.error("Please enter a valid country code with only digits")
-                country_code = None
-
-            # Phone input method
-            message_method = st.radio(
-                "Select Phone Number Input Method",
-                ["Phone Number", "Excel File"],
-                key="message_method",
-            )
-            phone_input = get_phone_input(message_method)
-
             language = templates[selected_template]["language"]
-            st.write("Language: ", language)
 
-            num_variables = 0
-            for component in templates[selected_template]["components"]:
-                if component["type"] == "BODY":
-                    num_variables = len(
-                        component.get("example", {}).get("body_text", [[]])[0]
+            # Media upload if needed
+            if header_type and header_type.upper() != "TEXT":
+                with st.container():
+                    st.markdown("#### 🖼️ Upload Media")
+                    header_input = get_header_input(header_type)
+                    st.write("")
+            else:
+                header_input = None
+
+            # Recipients
+            with st.container():
+                st.markdown("#### 👥 Configure Recipients")
+                message_method = st.radio(
+                    "Input Method",
+                    ["Phone Number", "Excel File"],
+                    key="message_method",
+                    horizontal=True,
+                )
+
+                # For Excel, ask if numbers include country code
+                excel_has_country_code = False
+                if "Excel" in message_method:
+                    has_cc = st.radio(
+                        "Do phone numbers in Excel include country code?",
+                        ["No (10 digits only)", "Yes (country code included)"],
+                        key="excel_country_code",
+                        horizontal=True,
                     )
-                    break
-            st.write("Number of Variables: ", num_variables)
+                    excel_has_country_code = "Yes" in has_cc
 
-            # Create text inputs for variables
-            variables = [
-                st.text_input(f"Variable {{ {i + 1} }}") for i in range(num_variables)
-            ]
+                # Show country code input if needed
+                if not excel_has_country_code:
+                    col1, col2 = st.columns([1, 3])
+                    with col1:
+                        country_code = st.text_input(
+                            "Country Code",
+                            value="91",
+                            placeholder="91",
+                            help="Digits only",
+                        )
+                        if country_code:
+                            # Check if input contains only digits
+                            if not country_code.isdigit():
+                                st.error("❌ Only digits allowed (0-9)")
+                                country_code = None
+                else:
+                    country_code = ""
 
-            # Show selected inputs
-            selected_inputs_md = f"""
-            - **Template Name:** {selected_template}
-            - **Header Type:** {header_type}
-            - **Country Code:** {country_code}
-            - **Phone Input Method:** {message_method}
-            - **Language:** {language}
-            - **Number of Variables:** {num_variables}
-            """
-            selected_inputs_md += "\n".join(
-                [
-                    f"- **Variable {{ {i + 1} }}:** {var or ''}"
-                    for i, var in enumerate(variables)
+                # Phone input (text box or file uploader)
+                clean_method = (
+                    "Phone Number" if "Phone" in message_method else "Excel File"
+                )
+                phone_input = get_phone_input(clean_method)
+
+            # Variables
+            with st.container():
+                st.markdown("#### ✏️ Template Variables")
+                num_variables = 0
+                for component in templates[selected_template]["components"]:
+                    if component["type"] == "BODY":
+                        num_variables = len(
+                            component.get("example", {}).get("body_text", [[]])[0]
+                        )
+                        break
+
+                variables = []
+                if num_variables > 0:
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        for i in range(num_variables):
+                            var = st.text_input(f"Variable {i + 1}", key=f"var_{i}")
+                            variables.append(var)
+                else:
+                    st.info("ℹ️ No variables required for this template")
+
+            # Summary table
+            with st.container():
+                st.markdown("#### 📄 Message Summary")
+                summary_rows = [
+                    {"Field": "Template", "Value": selected_template},
+                    {"Field": "Header", "Value": header_type or "None"},
+                    {"Field": "Language", "Value": language},
+                    {"Field": "Variables", "Value": str(num_variables)},
                 ]
-            )
-            st.info(selected_inputs_md)
+                for i, var in enumerate(variables):
+                    summary_rows.append(
+                        {"Field": f"Variable {i + 1}", "Value": var or "-"}
+                    )
 
-            if st.button("Send Message"):
+                st.dataframe(
+                    pd.DataFrame(summary_rows), hide_index=True, width="stretch"
+                )
+
+            st.markdown("---")
+
+            # Send button
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
+                send_button = st.button(
+                    "🚀 Send Messages", type="primary", width="stretch"
+                )
+
+            if send_button:
                 # If header_type is not TEXT and no media is uploaded, show an error and do not proceed.
                 if header_type and header_type.upper() != "TEXT" and not header_input:
                     st.error(
@@ -248,9 +420,9 @@ def main():
 
                     # Process phone number(s)
                     phone_numbers_dict = {}
-                    if message_method == "Phone Number" and phone_input:
+                    if "Phone" in message_method and phone_input:
                         phone_numbers_dict = {"Single": [phone_input]}
-                    elif message_method == "Excel File" and phone_input:
+                    elif "Excel" in message_method and phone_input:
                         phone_numbers_dict = excel_to_phone_list(phone_input)
 
                     total_messages_sent = 0
@@ -258,59 +430,121 @@ def main():
                     total_tasks = sum(
                         len(phones) for phones in phone_numbers_dict.values()
                     )
-                    progress_placeholder = st.empty()
+
+                    if total_tasks == 0:
+                        st.warning("⚠️ No phone numbers to send messages to.")
+                        return
+
+                    # Progress UI
+                    progress_bar = st.progress(0)
+                    progress_text = st.empty()
                     failed_numbers = []
 
-                    def send_message_task(phone_number):
-                        try:
-                            response = send_whatsapp_message(
-                                BUSINESS_CONFIG[business_name][
-                                    "WHATSAPP_PHONE_NUMBER_ID"
-                                ],
-                                BUSINESS_CONFIG[business_name]["WHATSAPP_ACCESS_TOKEN"],
-                                template_name=selected_template,
-                                language_code=language,
-                                country_code=country_code,
-                                phone_number=phone_number,
-                                components=components,
-                            )
-                            response_data = json.loads(response["response"])
-                            logger.info(
-                                f"Message sent to {phone_number}. Response: {response['response']}"
-                            )
+                    def send_message_task(phone_number, max_retries=2):
+                        """Send message with retry logic for transient errors."""
+                        import time
 
-                            # Check if response contains an error despite 200 status
-                            if "error" in response_data:
-                                error_details = response_data["error"]
-                                error_message = f"{error_details.get('message', 'Unknown error')} (Code: {error_details.get('code', 'N/A')})"
-                                logger.error(
-                                    f"API returned error for {phone_number}: {error_message}"
+                        for attempt in range(max_retries + 1):
+                            try:
+                                response = send_whatsapp_message(
+                                    BUSINESS_CONFIG[business_name][
+                                        "WHATSAPP_PHONE_NUMBER_ID"
+                                    ],
+                                    BUSINESS_CONFIG[business_name][
+                                        "WHATSAPP_ACCESS_TOKEN"
+                                    ],
+                                    template_name=selected_template,
+                                    language_code=language,
+                                    country_code=country_code,
+                                    phone_number=phone_number,
+                                    components=components,
                                 )
+                                response_data = json.loads(response["response"])
+
+                                # Check if response contains an error
+                                if "error" in response_data:
+                                    error_details = response_data["error"]
+                                    error_code = error_details.get("code", 0)
+                                    error_message = error_details.get(
+                                        "message", "Unknown error"
+                                    )
+
+                                    # Retry on rate limit (code 4 or 80007) or server errors (code >= 500)
+                                    if attempt < max_retries and (
+                                        error_code in [4, 80007] or error_code >= 500
+                                    ):
+                                        wait_time = (
+                                            2**attempt
+                                        ) * 0.5  # Exponential backoff: 0.5s, 1s
+                                        time.sleep(wait_time)
+                                        continue
+
+                                    logger.error(
+                                        f"API error for {phone_number}: {error_message} (Code: {error_code})"
+                                    )
+                                    return {
+                                        "success": False,
+                                        "phone": phone_number,
+                                        "error": f"{error_message} (Code: {error_code})",
+                                    }
+
+                                logger.info(f"Message sent to {phone_number}")
+                                return {"success": True, "phone": phone_number}
+
+                            except Exception as e:
+                                # Retry on network/connection errors
+                                if attempt < max_retries:
+                                    wait_time = (2**attempt) * 0.5
+                                    time.sleep(wait_time)
+                                    continue
+
+                                error_msg = (
+                                    f"Failed to send to {phone_number}: {str(e)}"
+                                )
+                                logger.error(error_msg)
                                 return {
                                     "success": False,
                                     "phone": phone_number,
-                                    "error": error_message,
+                                    "error": str(e),
                                 }
 
-                            return {"success": True, "phone": phone_number}
-                        except Exception as e:
-                            error_msg = f"Failed to send to {phone_number}: {str(e)}"
-                            logger.error(error_msg)
-                            return {
-                                "success": False,
-                                "phone": phone_number,
-                                "error": str(e),
-                            }
+                        return {
+                            "success": False,
+                            "phone": phone_number,
+                            "error": "Max retries exceeded",
+                        }
+
+                    # Meta WhatsApp Cloud API rate limits:
+                    # - 80 messages per second
+                    # - 1000 messages per hour per phone number
+                    # Using 80 workers to maximize throughput while respecting rate limits
+                    rate_limiter = {"last_batch_time": time.time(), "count": 0}
+                    rate_lock = Lock()
+
+                    def rate_limited_send(phone_number):
+                        """Send message with rate limiting (80 msg/sec)."""
+                        with rate_lock:
+                            rate_limiter["count"] += 1
+                            # Every 80 messages, ensure at least 1 second has passed
+                            if rate_limiter["count"] >= 80:
+                                elapsed = time.time() - rate_limiter["last_batch_time"]
+                                if elapsed < 1.0:
+                                    time.sleep(1.0 - elapsed)
+                                rate_limiter["last_batch_time"] = time.time()
+                                rate_limiter["count"] = 0
+
+                        return send_message_task(phone_number)
 
                     with concurrent.futures.ThreadPoolExecutor(
-                        max_workers=50
+                        max_workers=80  # Match Meta's 80 msg/sec limit
                     ) as executor:
                         futures = []
                         for sheet, phone_list in phone_numbers_dict.items():
                             for phone_number in phone_list:
                                 futures.append(
-                                    executor.submit(send_message_task, phone_number)
+                                    executor.submit(rate_limited_send, phone_number)
                                 )
+
                         for future in concurrent.futures.as_completed(futures):
                             result = future.result()
                             if result["success"]:
@@ -321,48 +555,55 @@ def main():
                                     {"phone": result["phone"], "error": result["error"]}
                                 )
 
-                            progress_placeholder.write(
-                                f"✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed} | Total: {total_tasks}"
+                            # Update progress with counter
+                            completed = total_messages_sent + total_messages_failed
+                            progress = completed / total_tasks
+                            progress_bar.progress(progress)
+                            progress_text.markdown(
+                                f"**Progress:** {completed}/{total_tasks} | ✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed}"
                             )
 
-                    # Display final summary
-                    progress_placeholder.success(
-                        f"**Completed!** ✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed} | Total: {total_tasks}"
-                    )
+                    # Final results
+                    progress_bar.progress(1.0)
 
-                    # Show failed numbers in expandable section
+                    if total_messages_failed == 0:
+                        st.success(f"✅ All {total_messages_sent} messages sent!")
+                    elif total_messages_sent == 0:
+                        st.error(f"❌ All {total_tasks} messages failed.")
+                    else:
+                        st.warning(
+                            f"✅ Sent: {total_messages_sent} | ❌ Failed: {total_messages_failed}"
+                        )
+
+                    # Show failed numbers in table
                     if failed_numbers:
-                        with st.expander(
-                            f"❌ View {len(failed_numbers)} Failed Numbers",
-                            expanded=False,
-                        ):
-                            # Create table with two columns
-                            import pandas as pd
+                        st.markdown("---")
+                        st.markdown(f"### ❌ Failed Numbers ({len(failed_numbers)})")
 
-                            df = pd.DataFrame(
-                                failed_numbers, columns=["phone", "error"]
-                            )
-                            df.columns = ["Phone Number", "Error Message"]
-                            df.index = range(1, len(df) + 1)
-                            st.dataframe(df, use_container_width=True)
+                        df = pd.DataFrame(failed_numbers, columns=["phone", "error"])
+                        df.columns = ["Phone Number", "Error Message"]
+                        df.index = range(1, len(df) + 1)
+                        st.dataframe(df, width="stretch")
 
-                            # Create downloadable list
-                            failed_list = "\n".join(
-                                [
-                                    f"{i}. {f['phone']} - {f['error']}"
-                                    for i, f in enumerate(failed_numbers, 1)
-                                ]
-                            )
-                            st.download_button(
-                                label="📥 Download Failed Numbers",
-                                data=failed_list,
-                                file_name=f"failed_numbers_{selected_template}.txt",
-                                mime="text/plain",
-                            )
+                        # Create downloadable list
+                        failed_list = "\n".join(
+                            [
+                                f"{i}. {f['phone']} - {f['error']}"
+                                for i, f in enumerate(failed_numbers, 1)
+                            ]
+                        )
+                        st.download_button(
+                            label="📥 Download Failed Numbers",
+                            data=failed_list,
+                            file_name=f"failed_numbers_{selected_template}.txt",
+                            mime="text/plain",
+                            width="stretch",
+                        )
     elif st.session_state["authentication_status"] is False:
-        st.error("Username/password is incorrect")
+        st.error("❌ Username/password is incorrect")
     elif st.session_state["authentication_status"] is None:
-        st.warning("Please enter your username and password")
+        st.markdown("### 🔐 Login")
+        st.info("Please enter your username and password to continue.")
 
 
 if __name__ == "__main__":
