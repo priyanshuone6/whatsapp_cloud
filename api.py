@@ -225,17 +225,19 @@ def excel_to_phone_list(file_path) -> dict:
 
     # Handle CSV files
     if is_csv:
-        df = pd.read_csv(file_path)
+        # Read CSV with dtype=str to prevent scientific notation conversion
+        df = pd.read_csv(file_path, dtype=str)
 
         for column in df.columns:
             if mobile_pattern.search(str(column)):
                 numbers = [
                     convert_to_phone(value)
                     for value in df[column].dropna()
-                    if valid_pattern.match(convert_to_phone(value))
+                    if value and valid_pattern.match(convert_to_phone(value))
                 ]
                 if numbers:
-                    result["CSV"] = numbers
+                    # Remove duplicates while preserving order
+                    result["CSV"] = list(dict.fromkeys(numbers))
                     break  # Use first matching column
 
         return result
@@ -251,6 +253,7 @@ def excel_to_phone_list(file_path) -> dict:
                     for cell in column[1:]
                     if cell.value and valid_pattern.match(convert_to_phone(cell.value))
                 ]
-                result[sheet.title] = numbers
+                # Remove duplicates while preserving order
+                result[sheet.title] = list(dict.fromkeys(numbers))
 
     return result
