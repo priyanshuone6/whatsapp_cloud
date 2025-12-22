@@ -270,22 +270,24 @@ def excel_to_phone_list(file_path) -> dict:
         process_dataframe(df, "CSV")
         return result
 
-    # Handle Excel files (.xls or .xlsx) - specify engine based on extension
+    # Handle Excel files - try openpyxl first (modern format), fallback to xlrd (old format)
     try:
-        # Determine engine from file extension
-        file_ext = filename.split(".")[-1].lower()
-        if file_ext == "xlsx":
-            df = pd.read_excel(file_path, engine="openpyxl")
-        elif file_ext == "xls":
+        # Try openpyxl first - works for .xlsx and misnamed .xlsx files with .xls extension
+        df = pd.read_excel(file_path, engine="openpyxl")
+        file_ext = filename.split(".")[-1].upper()
+        process_dataframe(df, file_ext)
+    except Exception as openpyxl_error:
+        try:
+            # If openpyxl fails, try xlrd for true old .xls files
             df = pd.read_excel(file_path, engine="xlrd")
-        else:
-            # Default to openpyxl for unknown extensions
-            df = pd.read_excel(file_path, engine="openpyxl")
-        
-        # Use uppercase extension for result key
-        process_dataframe(df, file_ext.upper())
-    except Exception as e:
-        logger.error(f"Failed to read Excel file: {e}")
-        raise
+            file_ext = filename.split(".")[-1].upper()
+            process_dataframe(df, file_ext)
+        except Exception as xlrd_error:
+            logger.error(
+                f"Failed to read Excel file with both engines. openpyxl error: {openpyxl_error}, xlrd error: {xlrd_error}"
+            )
+            raise Exception(
+                f"Could not read Excel file. Tried openpyxl and xlrd engines. File may be corrupted or unsupported format."
+            )
 
     return result
