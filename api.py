@@ -270,12 +270,20 @@ def excel_to_phone_list(file_path) -> dict:
         process_dataframe(df, "CSV")
         return result
 
-    # Handle Excel files (.xls or .xlsx) - let pandas auto-detect the format
+    # Handle Excel files (.xls or .xlsx) - specify engine based on extension
     try:
-        df = pd.read_excel(file_path)
-        # Use filename for result key
-        file_ext = filename.split(".")[-1].upper()
-        process_dataframe(df, file_ext)
+        # Determine engine from file extension
+        file_ext = filename.split(".")[-1].lower()
+        if file_ext == "xlsx":
+            df = pd.read_excel(file_path, engine="openpyxl")
+        elif file_ext == "xls":
+            df = pd.read_excel(file_path, engine="xlrd")
+        else:
+            # Default to openpyxl for unknown extensions
+            df = pd.read_excel(file_path, engine="openpyxl")
+        
+        # Use uppercase extension for result key
+        process_dataframe(df, file_ext.upper())
     except Exception as e:
         logger.error(f"Failed to read Excel file: {e}")
         raise
