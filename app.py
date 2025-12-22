@@ -197,8 +197,8 @@ def get_phone_input(message_method: str):
                     st.error("❌ Only digits allowed (0-9)")
                     return None
         return phone
-    elif message_method == "Excel File":
-        return st.file_uploader("Upload xlsx file", type=["xlsx"])
+    elif message_method == "Excel/CSV File":
+        return st.file_uploader("Upload xlsx or csv file", type=["xlsx", "csv"])
     return None
 
 
@@ -307,16 +307,16 @@ def main():
                 st.markdown("#### 👥 Configure Recipients")
                 message_method = st.radio(
                     "Input Method",
-                    ["Phone Number", "Excel File"],
+                    ["Phone Number", "Excel/CSV File"],
                     key="message_method",
                     horizontal=True,
                 )
 
-                # For Excel, ask if numbers include country code
+                # For Excel/CSV, ask if numbers include country code
                 excel_has_country_code = False
-                if "Excel" in message_method:
+                if "Excel/CSV" in message_method or "Excel" in message_method:
                     has_cc = st.radio(
-                        "Do phone numbers in Excel include country code?",
+                        "Do phone numbers in file include country code?",
                         ["No (10 digits only)", "Yes (country code included)"],
                         key="excel_country_code",
                         horizontal=True,
@@ -343,7 +343,7 @@ def main():
 
                 # Phone input (text box or file uploader)
                 clean_method = (
-                    "Phone Number" if "Phone" in message_method else "Excel File"
+                    "Phone Number" if "Phone" in message_method else "Excel/CSV File"
                 )
                 phone_input = get_phone_input(clean_method)
 
@@ -422,7 +422,9 @@ def main():
                     phone_numbers_dict = {}
                     if "Phone" in message_method and phone_input:
                         phone_numbers_dict = {"Single": [phone_input]}
-                    elif "Excel" in message_method and phone_input:
+                    elif (
+                        "Excel" in message_method or "CSV" in message_method
+                    ) and phone_input:
                         phone_numbers_dict = excel_to_phone_list(phone_input)
 
                     total_messages_sent = 0

@@ -2,5 +2,6 @@ streamlit
 python-dotenv
 requests
 openpyxl
+pandas
 streamlit-authenticator
 pywa

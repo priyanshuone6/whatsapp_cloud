@@ -8,6 +8,7 @@ import re
 from typing import Optional
 
 import openpyxl
+import pandas as pd
 from pywa import WhatsApp
 from pywa.types.templates import BodyText, TemplateStatus
 
@@ -198,19 +199,37 @@ def upload_media(
 
 def excel_to_phone_list(file_path) -> dict:
     """
-    Read phone numbers from Excel file.
+    Read phone numbers from Excel or CSV file.
 
     Args:
-        file_path: Path to Excel file
+        file_path: Path to Excel (.xlsx) or CSV (.csv) file
 
     Returns:
-        Dict mapping sheet names to lists of phone numbers (accepts any length)
+        Dict mapping sheet names (or 'CSV') to lists of phone numbers (accepts any length)
     """
     result = {}
     mobile_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
     # Accept any phone number with digits (no length restriction for international support)
     valid_pattern = re.compile(r"^\d+$")
 
+    # Handle CSV files
+    if str(file_path).lower().endswith(".csv"):
+        df = pd.read_csv(file_path)
+
+        for column in df.columns:
+            if mobile_pattern.search(str(column)):
+                numbers = [
+                    str(value).strip().lstrip("+")
+                    for value in df[column].dropna()
+                    if valid_pattern.match(str(value).strip().lstrip("+"))
+                ]
+                if numbers:
+                    result["CSV"] = numbers
+                    break  # Use first matching column
+
+        return result
+
+    # Handle Excel files
     wb = openpyxl.load_workbook(file_path)
     for sheet in wb.worksheets:
         for column in sheet.iter_cols(min_row=1, max_row=sheet.max_row):
