@@ -270,7 +270,7 @@ def excel_to_phone_list(file_path) -> dict:
         process_dataframe(df, "CSV")
         return result
 
-    # Handle Excel files - try openpyxl first (modern format), fallback to xlrd (old format)
+    # Handle Excel files - try openpyxl first (modern format), fallback to xlrd (old format), then CSV
     try:
         # Try openpyxl first - works for .xlsx and misnamed .xlsx files with .xls extension
         df = pd.read_excel(file_path, engine="openpyxl")
@@ -283,11 +283,19 @@ def excel_to_phone_list(file_path) -> dict:
             file_ext = filename.split(".")[-1].upper()
             process_dataframe(df, file_ext)
         except Exception as xlrd_error:
-            logger.error(
-                f"Failed to read Excel file with both engines. openpyxl error: {openpyxl_error}, xlrd error: {xlrd_error}"
-            )
-            raise Exception(
-                f"Could not read Excel file. Tried openpyxl and xlrd engines. File may be corrupted or unsupported format."
-            )
+            try:
+                # Last attempt: try reading as CSV (some .xls files are actually CSV)
+                logger.warning(
+                    f"Excel engines failed, attempting to read as CSV. openpyxl: {openpyxl_error}, xlrd: {xlrd_error}"
+                )
+                df = pd.read_csv(file_path)
+                process_dataframe(df, "CSV")
+            except Exception as csv_error:
+                logger.error(
+                    f"Failed with all methods. openpyxl: {openpyxl_error}, xlrd: {xlrd_error}, csv: {csv_error}"
+                )
+                raise Exception(
+                    f"Could not read file. Tried openpyxl, xlrd, and CSV readers. File may be corrupted or unsupported format."
+                )
 
     return result
