@@ -202,10 +202,10 @@ def excel_to_phone_list(file_path) -> dict:
     Read phone numbers from Excel or CSV file.
 
     Args:
-        file_path: Path to Excel (.xlsx) or CSV (.csv) file, or Streamlit UploadedFile object
+        file_path: Path to Excel (.xls, .xlsx) or CSV (.csv) file, or Streamlit UploadedFile object
 
     Returns:
-        Dict mapping sheet names (or 'CSV') to lists of phone numbers (accepts any length)
+        Dict mapping sheet names (or 'CSV'/'XLS') to lists of phone numbers (accepts any length)
     """
     result = {}
     mobile_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
@@ -219,15 +219,8 @@ def excel_to_phone_list(file_path) -> dict:
             return str(int(value))
         return str(value).strip().lstrip("+")
 
-    # Check if it's a CSV file (handle both file path strings and Streamlit UploadedFile)
-    filename = getattr(file_path, 'name', str(file_path))
-    is_csv = filename.lower().endswith(".csv")
-
-    # Handle CSV files
-    if is_csv:
-        # Read CSV with dtype=str to prevent scientific notation conversion
-        df = pd.read_csv(file_path, dtype=str)
-
+    def process_dataframe(df, result_key):
+        """Process pandas DataFrame to extract and deduplicate phone numbers."""
         for column in df.columns:
             if mobile_pattern.search(str(column)):
                 numbers = [
@@ -237,12 +230,29 @@ def excel_to_phone_list(file_path) -> dict:
                 ]
                 if numbers:
                     # Remove duplicates while preserving order
-                    result["CSV"] = list(dict.fromkeys(numbers))
+                    result[result_key] = list(dict.fromkeys(numbers))
                     break  # Use first matching column
 
+    # Check if it's a CSV file (handle both file path strings and Streamlit UploadedFile)
+    filename = getattr(file_path, "name", str(file_path))
+    is_csv = filename.lower().endswith(".csv")
+    is_xls = filename.lower().endswith(".xls") and not filename.lower().endswith(
+        ".xlsx"
+    )
+
+    # Handle CSV files
+    if is_csv:
+        df = pd.read_csv(file_path, dtype=str)
+        process_dataframe(df, "CSV")
         return result
 
-    # Handle Excel files
+    # Handle .xls files (old Excel format) using pandas
+    if is_xls:
+        df = pd.read_excel(file_path, dtype=str)
+        process_dataframe(df, "XLS")
+        return result
+
+    # Handle .xlsx files (modern Excel format)
     wb = openpyxl.load_workbook(file_path)
     for sheet in wb.worksheets:
         for column in sheet.iter_cols(min_row=1, max_row=sheet.max_row):

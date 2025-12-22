@@ -198,7 +198,9 @@ def get_phone_input(message_method: str):
                     return None
         return phone
     elif message_method == "Excel/CSV File":
-        return st.file_uploader("Upload xlsx or csv file", type=["xlsx", "csv"])
+        return st.file_uploader(
+            "Upload xls, xlsx or csv file", type=["xls", "xlsx", "csv"]
+        )
     return None
 
 
