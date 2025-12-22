@@ -205,7 +205,7 @@ def excel_to_phone_list(file_path) -> dict:
         file_path: Path to Excel (.xls, .xlsx) or CSV (.csv) file, or Streamlit UploadedFile object
 
     Returns:
-        Dict mapping sheet names (or 'CSV'/'XLS') to lists of phone numbers (accepts any length)
+        Dict mapping sheet names (or 'CSV'/'XLS'/'XLSX') to lists of phone numbers (accepts any length)
     """
     result = {}
     mobile_pattern = re.compile(r"(mobile|phone|cell|tel|contact)", re.I)
@@ -214,20 +214,46 @@ def excel_to_phone_list(file_path) -> dict:
 
     def convert_to_phone(value):
         """Convert value to phone number string, handling scientific notation."""
-        if isinstance(value, (float, int)):
-            # Convert to int first to remove decimal, then to string
-            return str(int(value))
-        return str(value).strip().lstrip("+")
+        try:
+            # Skip None, NaN, or empty values
+            if value is None or (isinstance(value, float) and pd.isna(value)):
+                return ""
+
+            # Handle numeric types (float, int)
+            if isinstance(value, (float, int)):
+                return str(int(value))
+
+            # Handle string that might be in scientific notation
+            value_str = str(value).strip()
+
+            # Return empty if after stripping it's empty
+            if not value_str:
+                return ""
+
+            # Check if string contains scientific notation (e.g., "3.54E+11")
+            if "E" in value_str.upper():
+                try:
+                    # Convert scientific notation string to number, then to int
+                    return str(int(float(value_str)))
+                except (ValueError, OverflowError):
+                    pass
+
+            # Regular string processing - remove + prefix
+            return value_str.lstrip("+")
+        except Exception:
+            return ""
 
     def process_dataframe(df, result_key):
         """Process pandas DataFrame to extract and deduplicate phone numbers."""
         for column in df.columns:
             if mobile_pattern.search(str(column)):
-                numbers = [
-                    convert_to_phone(value)
-                    for value in df[column].dropna()
-                    if value and valid_pattern.match(convert_to_phone(value))
-                ]
+                numbers = []
+                for value in df[column].dropna():
+                    if value and str(value).strip():  # Ensure value is not empty
+                        phone_str = convert_to_phone(value)
+                        if phone_str and valid_pattern.match(phone_str):
+                            numbers.append(phone_str)
+
                 if numbers:
                     # Remove duplicates while preserving order
                     result[result_key] = list(dict.fromkeys(numbers))
@@ -236,27 +262,22 @@ def excel_to_phone_list(file_path) -> dict:
     # Check if it's a CSV file (handle both file path strings and Streamlit UploadedFile)
     filename = getattr(file_path, "name", str(file_path))
     is_csv = filename.lower().endswith(".csv")
-    is_xls = filename.lower().endswith(".xls") and not filename.lower().endswith(
-        ".xlsx"
-    )
-    is_xlsx = filename.lower().endswith(".xlsx")
 
     # Handle CSV files
     if is_csv:
-        df = pd.read_csv(file_path, dtype=str)
+        # Read CSV - pandas may auto-convert to scientific notation
+        df = pd.read_csv(file_path)
         process_dataframe(df, "CSV")
         return result
 
-    # Handle .xls files (old Excel format) using pandas
-    if is_xls:
-        df = pd.read_excel(file_path, dtype=str, engine="xlrd")
-        process_dataframe(df, "XLS")
-        return result
-
-    # Handle .xlsx files (modern Excel format) using pandas
-    if is_xlsx:
-        df = pd.read_excel(file_path, dtype=str, engine="openpyxl")
-        process_dataframe(df, "XLSX")
-        return result
+    # Handle Excel files (.xls or .xlsx) - let pandas auto-detect the format
+    try:
+        df = pd.read_excel(file_path)
+        # Use filename for result key
+        file_ext = filename.split(".")[-1].upper()
+        process_dataframe(df, file_ext)
+    except Exception as e:
+        logger.error(f"Failed to read Excel file: {e}")
+        raise
 
     return result
