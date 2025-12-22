@@ -212,6 +212,13 @@ def excel_to_phone_list(file_path) -> dict:
     # Accept any phone number with digits (no length restriction for international support)
     valid_pattern = re.compile(r"^\d+$")
 
+    def convert_to_phone(value):
+        """Convert value to phone number string, handling scientific notation."""
+        if isinstance(value, (float, int)):
+            # Convert to int first to remove decimal, then to string
+            return str(int(value))
+        return str(value).strip().lstrip("+")
+
     # Check if it's a CSV file (handle both file path strings and Streamlit UploadedFile)
     filename = getattr(file_path, 'name', str(file_path))
     is_csv = filename.lower().endswith(".csv")
@@ -223,9 +230,9 @@ def excel_to_phone_list(file_path) -> dict:
         for column in df.columns:
             if mobile_pattern.search(str(column)):
                 numbers = [
-                    str(value).strip().lstrip("+")
+                    convert_to_phone(value)
                     for value in df[column].dropna()
-                    if valid_pattern.match(str(value).strip().lstrip("+"))
+                    if valid_pattern.match(convert_to_phone(value))
                 ]
                 if numbers:
                     result["CSV"] = numbers
@@ -240,10 +247,9 @@ def excel_to_phone_list(file_path) -> dict:
             header = column[0].value
             if header and mobile_pattern.search(str(header)):
                 numbers = [
-                    str(cell.value).strip().lstrip("+")
+                    convert_to_phone(cell.value)
                     for cell in column[1:]
-                    if cell.value
-                    and valid_pattern.match(str(cell.value).strip().lstrip("+"))
+                    if cell.value and valid_pattern.match(convert_to_phone(cell.value))
                 ]
                 result[sheet.title] = numbers
 
