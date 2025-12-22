@@ -202,7 +202,7 @@ def excel_to_phone_list(file_path) -> dict:
     Read phone numbers from Excel or CSV file.
 
     Args:
-        file_path: Path to Excel (.xlsx) or CSV (.csv) file
+        file_path: Path to Excel (.xlsx) or CSV (.csv) file, or Streamlit UploadedFile object
 
     Returns:
         Dict mapping sheet names (or 'CSV') to lists of phone numbers (accepts any length)
@@ -212,8 +212,12 @@ def excel_to_phone_list(file_path) -> dict:
     # Accept any phone number with digits (no length restriction for international support)
     valid_pattern = re.compile(r"^\d+$")
 
+    # Check if it's a CSV file (handle both file path strings and Streamlit UploadedFile)
+    filename = getattr(file_path, 'name', str(file_path))
+    is_csv = filename.lower().endswith(".csv")
+
     # Handle CSV files
-    if str(file_path).lower().endswith(".csv"):
+    if is_csv:
         df = pd.read_csv(file_path)
 
         for column in df.columns:
