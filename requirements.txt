@@ -3,5 +3,6 @@ python-dotenv
 requests
 openpyxl
 pandas
+xlrd
 streamlit-authenticator
 pywa

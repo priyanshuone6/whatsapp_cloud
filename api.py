@@ -239,6 +239,7 @@ def excel_to_phone_list(file_path) -> dict:
     is_xls = filename.lower().endswith(".xls") and not filename.lower().endswith(
         ".xlsx"
     )
+    is_xlsx = filename.lower().endswith(".xlsx")
 
     # Handle CSV files
     if is_csv:
@@ -248,22 +249,14 @@ def excel_to_phone_list(file_path) -> dict:
 
     # Handle .xls files (old Excel format) using pandas
     if is_xls:
-        df = pd.read_excel(file_path, dtype=str)
+        df = pd.read_excel(file_path, dtype=str, engine="xlrd")
         process_dataframe(df, "XLS")
         return result
 
-    # Handle .xlsx files (modern Excel format)
-    wb = openpyxl.load_workbook(file_path)
-    for sheet in wb.worksheets:
-        for column in sheet.iter_cols(min_row=1, max_row=sheet.max_row):
-            header = column[0].value
-            if header and mobile_pattern.search(str(header)):
-                numbers = [
-                    convert_to_phone(cell.value)
-                    for cell in column[1:]
-                    if cell.value and valid_pattern.match(convert_to_phone(cell.value))
-                ]
-                # Remove duplicates while preserving order
-                result[sheet.title] = list(dict.fromkeys(numbers))
+    # Handle .xlsx files (modern Excel format) using pandas
+    if is_xlsx:
+        df = pd.read_excel(file_path, dtype=str, engine="openpyxl")
+        process_dataframe(df, "XLSX")
+        return result
 
     return result
