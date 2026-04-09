@@ -9,14 +9,18 @@ from typing import Optional
 
 import openpyxl
 import pandas as pd
-from pywa import WhatsApp
+from pywa import Version, WhatsApp
 from pywa.types.templates import BodyText, TemplateStatus
 
 logger = logging.getLogger(__name__)
 
 # Cache for WhatsApp client instances
 _clients: dict[str, WhatsApp] = {}
-META_API_VERSION = 25.0
+
+REQUESTED_META_API_VERSION = 25.0
+
+PYWA_SUPPORTED_META_API_VERSION = float(str(Version.GRAPH_API))
+META_API_VERSION = min(REQUESTED_META_API_VERSION, PYWA_SUPPORTED_META_API_VERSION)
 
 
 def _get_client(phone_id: str, token: str, waba_id: str = None) -> WhatsApp:
@@ -78,8 +82,10 @@ def send_whatsapp_message(
 
     try:
         language = TemplateLanguage(language_code)
-    except ValueError:
-        language = language_code  # Fallback to string if not in enum
+    except ValueError as exc:
+        raise ValueError(
+            f"Unsupported template language '{language_code}' for installed pywa version."
+        ) from exc
 
     logger.info(f"Sending '{template_name}' to {full_phone}, lang={language}")
 
