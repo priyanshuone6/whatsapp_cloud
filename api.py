@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Cache for WhatsApp client instances
 _clients: dict[str, WhatsApp] = {}
+META_API_VERSION = 25.0
 
 
 def _get_client(phone_id: str, token: str, waba_id: str = None) -> WhatsApp:
@@ -26,7 +27,7 @@ def _get_client(phone_id: str, token: str, waba_id: str = None) -> WhatsApp:
             phone_id=phone_id,
             token=token,
             business_account_id=waba_id,
-            api_version=24.0,
+            api_version=META_API_VERSION,
         )
     return _clients[key]
 
@@ -119,7 +120,7 @@ def get_message_templates(
     client = WhatsApp(
         token=WHATSAPP_ACCESS_TOKEN,
         business_account_id=WHATSAPP_BUSINESS_ACCOUNT_ID,
-        api_version=24.0,
+        api_version=META_API_VERSION,
     )
 
     templates = {}
